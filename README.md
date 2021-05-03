@@ -7,7 +7,7 @@ K8S Tool to proxy-pass services from kubernetes cluster if you don't have a vpn 
 
 # Problem
 
-You have a multiplr `HTTP` endpoints at kubernetes cluster. To working with them as a Developer or QA you need to have a network access to them.
+You have a multiple `HTTP` endpoints at kubernetes cluster. To working with them as a Developer or QA you need to have a network access to them.
 Let's assume that you have only kubectl access (no vpn or other things). To achieve that you need to run multile commands `kubectl port-forward`
 
 This tool could save your time and terminals. It works like `nginx proxy-pass`.
