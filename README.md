@@ -13,7 +13,7 @@ Let's assume that you have only kubectl access (no vpn or other things). To achi
 This tool could save your time and terminals. It works like `nginx proxy-pass`.
 
 `k8ssvcproxy` will *autodiscover all services* that have an edpoint and create a proxy tunnel to them using native `kubectl` tool
-*Don't forget to update the `/etc/hosts` (you could find content in the program output)
+*Don't forget to update the `/etc/hosts` (you could find content in the program output)*
 
 Example:
 Considering that you have 3 Services in k8s cluester
