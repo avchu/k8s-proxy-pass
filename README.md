@@ -45,6 +45,9 @@ Forwarding nginx: 8080
 Trying to register servce: nginx
 Forwarding from 127.0.0.1:59761 -> 8080
 Servce nginx registered on port 59761
+### START K8SSVCPROXY ###
+nginx.default.svc.cluster.local    127.0.0.1
+### END K8SSVCPROXY ###
 ```
 
 Then you clould use `curl` to reach the endpoint
