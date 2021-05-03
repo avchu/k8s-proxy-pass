@@ -45,8 +45,9 @@ const (
 )
 
 // NewCmdPortForward reates new portforward object
-func NewCmdPortForward(f cmdutil.Factory, streams genericclioptions.IOStreams, listenAddress string) *PortForwardOptions {
+func NewCmdPortForward(namespace string, streams genericclioptions.IOStreams, listenAddress string) *PortForwardOptions {
 	return &PortForwardOptions{
+		Namespace: namespace,
 		PortForwarder: &defaultPortForwarder{
 			IOStreams:     streams,
 			PortForwarder: nil,
@@ -229,7 +230,6 @@ func checkUDPPortInPod(ports []string, pod *corev1.Pod) error {
 func (o *PortForwardOptions) Complete(f cmdutil.Factory, args []string) error {
 	var err error
 
-	o.Namespace, _, err = f.ToRawKubeConfigLoader().Namespace()
 	if err != nil {
 		return err
 	}

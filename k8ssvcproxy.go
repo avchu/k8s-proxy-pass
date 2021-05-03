@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,7 +53,7 @@ func (config *K8SProxyServiceConfig) InitConfig() {
 		config.kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}
 
-	config.namespace = flag.String("namespace", "default", "kubernetes namespace")
+	config.namespace = flag.String("namespace", "default", "comma-separated kubernetes namespace]")
 
 	config.listenAddress = flag.String("listen", "127.0.0.1", "default address to listen")
 
@@ -72,19 +73,25 @@ func (config *K8SProxyServiceConfig) InitConfig() {
 		panic(err.Error())
 	}
 
-	services, err := clientset.CoreV1().Services(*config.namespace).List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		panic(err.Error())
+	ns := strings.Split(*config.namespace, ",")
+	for _, v := range ns {
+		services, err := clientset.CoreV1().Services(v).List(context.TODO(), metav1.ListOptions{})
+		if err != nil {
+			panic(err.Error())
+		}
+		if config.services == nil {
+			config.services = services
+		} else {
+			config.services.Items = append(config.services.Items, services.Items...)
+		}
 	}
-	config.services = services
 
-	if len(services.Items) == 0 {
+	if len(config.services.Items) == 0 {
 		log.Println("No Services found!")
 		os.Exit(1)
 	}
 
 	kubeConfigFlags := genericclioptions.NewConfigFlags(true).WithDeprecatedPasswordFlag()
-	kubeConfigFlags.Namespace = config.namespace
 	config.matchVersionKubeConfigFlags = cmdutil.NewMatchVersionFlags(kubeConfigFlags)
 
 }
@@ -111,11 +118,9 @@ func main() {
 	f := cmdutil.NewFactory(config.matchVersionKubeConfigFlags)
 
 	for _, value := range config.services.Items {
-		log.Println("Service to proxy:", value.Name)
-		if len(value.Spec.Ports) != 1 {
-			log.Println("Servce", value.Name, "has more than 1 port:", len(value.Spec.Ports))
-		} else if value.Spec.Type != "ClusterIP" {
-			log.Println("Servce", value.Name, "has wrong type:", value.Spec.Type)
+		log.Println("Service to proxy:", value.Name, value.Namespace)
+		if value.Spec.Type != "ClusterIP" {
+			log.Println("Servce", value.Name, value.Namespace, "has wrong type:", value.Spec.Type)
 		} else {
 			runPortForward(value, f, config.ioStreams, config.listenAddress, config.counterServiceMap)
 		}
@@ -151,8 +156,12 @@ func runPortForward(
 	ioStreams genericclioptions.IOStreams,
 	listenAddress *string, servcesMap *CounterServiceMap) {
 
-	pf := proxypass.NewCmdPortForward(f, ioStreams, *listenAddress)
-	log.Println("Forwarding", value.Name, "->", value.Spec.Ports[0].Port)
+	if len(value.Spec.Ports) != 1 {
+		log.Println("Servce", value.Name, "has more than 1 port:", len(value.Spec.Ports), "Using first:", value.Spec.Ports[0].Port)
+	}
+
+	pf := proxypass.NewCmdPortForward(value.Namespace, ioStreams, *listenAddress)
+	log.Println("Forwarding", value.Name, value.Namespace, "->", value.Spec.Ports[0].Port)
 	argv := []string{fmt.Sprintf("service/%s", value.Name), fmt.Sprintf(":%d", value.Spec.Ports[0].Port)}
 
 	err := pf.Complete(f, argv)
@@ -160,7 +169,8 @@ func runPortForward(
 	if err != nil {
 		panic(err.Error())
 	}
-	servcesMap.m[value.Name] = pf
+	k := value.Name + "." + value.Namespace
+	servcesMap.m[k] = pf
 }
 
 func registerHttpListener(servicesMap *CounterServiceMap, listenAddress string, namespace string, registered *k8shttp.RegisteredServicesAndPorts) {
@@ -187,7 +197,7 @@ func registerHttpListener(servicesMap *CounterServiceMap, listenAddress string, 
 			if err != nil {
 				panic(err)
 			}
-			serviceName := fmt.Sprintf("%s.%s.svc.cluster.local:%d", k, namespace, ports[0].Remote)
+			serviceName := fmt.Sprintf("%s.svc.cluster.local:%d", k, ports[0].Remote)
 			registered.ServiceToPortMap[serviceName] = fmt.Sprintf("%s:%d", listenAddress, ports[0].Local)
 		}
 		if len(listOfRegisteredServices) == len(servicesMap.m) {

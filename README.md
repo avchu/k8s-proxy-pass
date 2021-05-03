@@ -47,7 +47,7 @@ Trying to register servce: nginx
 Forwarding from 127.0.0.1:59761 -> 8080
 Servce nginx registered on port 59761
 ### START K8SSVCPROXY ###
-nginx.default.svc.cluster.local    127.0.0.1
+127.0.0.1    nginx.default.svc.cluster.local
 ### END K8SSVCPROXY ###
 ```
 One line should be added to `/etc/hosts`
@@ -79,7 +79,7 @@ curl -v http://nginx.default.svc.cluster.local:8080
 # Parameters
 | Name| Description | Default value |
 |---|---|---|
-| namesapce | k8s namesapce to discover | `default` |
+| namesapce | k8s namesapce to discover | `default` or `default,default2` for multiple namespaces |
 | listen | host to bind | `127.0.0.1`  |
 | port | port to bind | 8080 |
 | kubeconfig | path to kubeconfig| `~/.kube/config` |

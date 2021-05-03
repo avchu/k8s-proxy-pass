@@ -11,7 +11,7 @@ import (
 
 const hostsTemplate = `
 ### START K8SSVCPROXY ###
-{{range $key, $value := .HostsMap}}{{$key}}    {{$value}}
+{{range $key, $value := .HostsMap}}{{$value}}    {{$key}}
 {{end}}### END K8SSVCPROXY ###
 `
 
