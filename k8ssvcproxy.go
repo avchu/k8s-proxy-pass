@@ -4,8 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"k8ssvcproxy/fileupdater"
 	k8shttp "k8ssvcproxy/http"
 	"k8ssvcproxy/proxypass"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,7 +28,7 @@ import (
 // CounterServiceMap is a map for storing Service to portforward object
 type CounterServiceMap = struct {
 	sync.RWMutex
-	m map[string]proxypass.PortForwardOptions
+	m map[string]*proxypass.PortForwardOptions
 }
 
 // K8SProxyServiceConfig is an object to store all connfigurations
@@ -39,6 +41,7 @@ type K8SProxyServiceConfig struct {
 	matchVersionKubeConfigFlags *cmdutil.MatchVersionFlags
 	counterServiceMap           *CounterServiceMap
 	ioStreams                   genericclioptions.IOStreams
+	updateHosts                 *bool
 }
 
 // InitConfig is inializing configuration
@@ -55,8 +58,10 @@ func (config *K8SProxyServiceConfig) InitConfig() {
 
 	config.litenPort = flag.Int("port", 8080, "default port to listen")
 
+	config.updateHosts = flag.Bool("update-hosts", false, "udate /etc/hosts")
+
 	flag.Parse()
-	fmt.Printf("Connecting to %s using %s\n", *config.namespace, *config.kubeconfig)
+	log.Println("Connecting to ", *config.namespace, "using ", *config.kubeconfig)
 	restConfig, err := clientcmd.BuildConfigFromFlags("", *config.kubeconfig)
 	if err != nil {
 		panic(err.Error())
@@ -74,7 +79,7 @@ func (config *K8SProxyServiceConfig) InitConfig() {
 	config.services = services
 
 	if len(services.Items) == 0 {
-		fmt.Println("No Services found!")
+		log.Println("No Services found!")
 		os.Exit(1)
 	}
 
@@ -90,7 +95,7 @@ func main() {
 		ioStreams: genericclioptions.IOStreams{In: os.Stdin, Out: os.Stdout, ErrOut: os.Stderr},
 		counterServiceMap: &CounterServiceMap{
 			sync.RWMutex{},
-			make(map[string]proxypass.PortForwardOptions),
+			make(map[string]*proxypass.PortForwardOptions),
 		},
 	}
 
@@ -106,16 +111,22 @@ func main() {
 	f := cmdutil.NewFactory(config.matchVersionKubeConfigFlags)
 
 	for _, value := range config.services.Items {
-		fmt.Printf("Service to proxy: %s\n", value.Name)
+		log.Println("Service to proxy:", value.Name)
 		if len(value.Spec.Ports) != 1 {
-			fmt.Printf("Servce %s has more than 1 port: %d\n", value.Name, len(value.Spec.Ports))
+			log.Println("Servce", value.Name, "has more than 1 port:", len(value.Spec.Ports))
 		} else if value.Spec.Type != "ClusterIP" {
-			fmt.Printf("Servce %s has wrong type: %s\n", value.Name, value.Spec.Type)
+			log.Println("Servce", value.Name, "has wrong type:", value.Spec.Type)
 		} else {
-			go runPortForward(value, f, config.ioStreams, config.listenAddress, config.counterServiceMap)
+			runPortForward(value, f, config.ioStreams, config.listenAddress, config.counterServiceMap)
 		}
 	}
-	go registerHttpListener(config.counterServiceMap, *config.listenAddress, *config.namespace, httpHandler.RegisterdServices)
+
+	for k, v := range config.counterServiceMap.m {
+		log.Println("Running: ", k)
+		go run(k, v)
+	}
+
+	registerHttpListener(config.counterServiceMap, *config.listenAddress, *config.namespace, httpHandler.RegisterdServices)
 
 	err := http.ListenAndServe(fmt.Sprintf("%s:%d", *config.listenAddress, *config.litenPort), httpHandler)
 	if err != nil {
@@ -123,18 +134,25 @@ func main() {
 	}
 
 }
+
+func run(service string, pf *proxypass.PortForwardOptions) {
+	if pf == nil {
+		log.Println("Service is nil:", service)
+		return
+	}
+	err := pf.RunPortForward()
+	if err != nil {
+		log.Println("Error with service", service, err.Error())
+	}
+}
+
 func runPortForward(
 	value apicorev1.Service, f cmdutil.Factory,
 	ioStreams genericclioptions.IOStreams,
-	listenAddress *string, m *CounterServiceMap) {
+	listenAddress *string, servcesMap *CounterServiceMap) {
 
 	pf := proxypass.NewCmdPortForward(f, ioStreams, *listenAddress)
-
-	m.RLock()
-	m.m[value.Name] = *pf
-	m.RUnlock()
-
-	fmt.Printf("Forwarding %s: %d\n", value.Name, value.Spec.Ports[0].Port)
+	log.Println("Forwarding", value.Name, "->", value.Spec.Ports[0].Port)
 	argv := []string{fmt.Sprintf("service/%s", value.Name), fmt.Sprintf(":%d", value.Spec.Ports[0].Port)}
 
 	err := pf.Complete(f, argv)
@@ -142,28 +160,25 @@ func runPortForward(
 	if err != nil {
 		panic(err.Error())
 	}
-
-	err = pf.RunPortForward()
-
-	if err != nil {
-		panic(err.Error())
-	}
+	servcesMap.m[value.Name] = pf
 }
 
-func registerHttpListener(m *CounterServiceMap, listenAddress string, namespace string, registered *k8shttp.RegisteredServicesAndPorts) {
+func registerHttpListener(servicesMap *CounterServiceMap, listenAddress string, namespace string, registered *k8shttp.RegisteredServicesAndPorts) {
 
 	listOfRegisteredServices := []string{}
 	for {
-		m.RLock()
-		for k, v := range m.m {
+		for k, v := range servicesMap.m {
 			if contains(listOfRegisteredServices, k) {
 				continue
 			}
 
-			fmt.Printf("Trying to register servce: %s\n", k)
+			if v.PortForwarder.GetOuterPortForward() == nil {
+				log.Println("Connection for Service", k, "is still in progress")
+				continue
+			}
 			ports, err := v.PortForwarder.GetPorts()
 			if err != nil {
-				fmt.Printf("Connection for Service %s still in progress\n", k)
+				log.Println("Connection for Service", k, "is still in progress")
 				continue
 			}
 			fmt.Printf("Servce %s registered on port %d\n", k, ports[0].Local)
@@ -173,11 +188,13 @@ func registerHttpListener(m *CounterServiceMap, listenAddress string, namespace 
 				panic(err)
 			}
 			serviceName := fmt.Sprintf("%s.%s.svc.cluster.local:%d", k, namespace, ports[0].Remote)
-			registered.RLock()
 			registered.ServiceToPortMap[serviceName] = fmt.Sprintf("%s:%d", listenAddress, ports[0].Local)
-			registered.RUnlock()
 		}
-		m.RUnlock()
+		if len(listOfRegisteredServices) == len(servicesMap.m) {
+			log.Println("All services was registered!")
+			fileupdater.PrintEtcHosts(registered)
+			return
+		}
 		time.Sleep(1000 * time.Millisecond)
 	}
 

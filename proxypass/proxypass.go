@@ -48,7 +48,8 @@ const (
 func NewCmdPortForward(f cmdutil.Factory, streams genericclioptions.IOStreams, listenAddress string) *PortForwardOptions {
 	return &PortForwardOptions{
 		PortForwarder: &defaultPortForwarder{
-			IOStreams: streams,
+			IOStreams:     streams,
+			PortForwarder: nil,
 		},
 		Address: []string{listenAddress},
 	}
@@ -57,15 +58,20 @@ func NewCmdPortForward(f cmdutil.Factory, streams genericclioptions.IOStreams, l
 type portForwarder interface {
 	ForwardPorts(method string, url *url.URL, opts PortForwardOptions) error
 	GetPorts() ([]portforward.ForwardedPort, error)
+	GetOuterPortForward() *portforward.PortForwarder
 }
 
 type defaultPortForwarder struct {
-	genericclioptions.IOStreams
-	portforward.PortForwarder
+	IOStreams     genericclioptions.IOStreams
+	PortForwarder *portforward.PortForwarder
 }
 
 func (f *defaultPortForwarder) GetPorts() ([]portforward.ForwardedPort, error) {
 	return f.PortForwarder.GetPorts()
+}
+
+func (f *defaultPortForwarder) GetOuterPortForward() *portforward.PortForwarder {
+	return f.PortForwarder
 }
 
 func (f *defaultPortForwarder) ForwardPorts(method string, url *url.URL, opts PortForwardOptions) error {
@@ -74,11 +80,11 @@ func (f *defaultPortForwarder) ForwardPorts(method string, url *url.URL, opts Po
 		return nil
 	}
 	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, method, url)
-	fw, err := portforward.NewOnAddresses(dialer, opts.Address, opts.Ports, opts.StopChannel, opts.ReadyChannel, f.Out, f.ErrOut)
+	fw, err := portforward.NewOnAddresses(dialer, opts.Address, opts.Ports, opts.StopChannel, opts.ReadyChannel, f.IOStreams.Out, f.IOStreams.ErrOut)
 	if err != nil {
 		return err
 	}
-	f.PortForwarder = *fw
+	f.PortForwarder = fw
 	return fw.ForwardPorts()
 }
 
